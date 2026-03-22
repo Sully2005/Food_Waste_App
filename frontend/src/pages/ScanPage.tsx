@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { usePreferences } from "../hooks/usePreferences";
+import { postFridgeDetect, postRecipesRecommend } from "../lib/api";
+import { resolveImageBase64 } from "../lib/imageData";
 
 type Phase = "camera" | "preview";
 
@@ -9,9 +11,23 @@ export function ScanPage() {
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  /** Blocks double-clicks before React re-renders `analyzing`. */
+  const recipeRequestInFlight = useRef(false);
   const [phase, setPhase] = useState<Phase>("camera");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [recipeSource, setRecipeSource] = useState<string | null>(null);
+  const [recipes, setRecipes] = useState<
+    | {
+        title: string;
+        description: string;
+        ingredientsUsed: string[];
+        steps: string[];
+        notes?: string;
+      }[]
+    | null
+  >(null);
 
   const stopStream = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -111,6 +127,34 @@ export function ScanPage() {
     setError(null);
   }
 
+  async function findRecipes() {
+    if (!previewUrl || recipeRequestInFlight.current) return;
+    recipeRequestInFlight.current = true;
+    setAnalyzing(true);
+    setError(null);
+    setRecipes(null);
+    setRecipeSource(null);
+    try {
+      const imageBase64 = await resolveImageBase64(previewUrl);
+      const detected = await postFridgeDetect(imageBase64);
+      const ingredients = detected.items.map((i) => i.name);
+      const result = await postRecipesRecommend({
+        ingredients,
+        restrictions: {
+          diets: preferences.dietaryRestrictions,
+          allergies: [],
+        },
+      });
+      setRecipes(result.recipes);
+      setRecipeSource(result.source);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not get recipes.");
+    } finally {
+      recipeRequestInFlight.current = false;
+      setAnalyzing(false);
+    }
+  }
+
   function finish() {
     if (previewUrl?.startsWith("blob:")) {
       URL.revokeObjectURL(previewUrl);
@@ -166,14 +210,49 @@ export function ScanPage() {
               <img src={previewUrl} alt="Captured fridge" className="preview-img" />
             </div>
             <p className="lede lede--compact">
-              When your API is ready, this image can be sent for ingredient
-              detection. For now, tap Done to return home.
+              Run ingredient detection and recipe ideas using your saved
+              preferences (diets map to the API as restriction lists).
             </p>
+            {error ? <p className="banner warn">{error}</p> : null}
+            {recipes && recipes.length > 0 ? (
+              <div className="recipe-preview-list">
+                <p className="muted small">
+                  Source: {recipeSource ?? "unknown"}
+                </p>
+                <ul className="recipe-cards">
+                  {recipes.map((r) => (
+                    <li key={r.title} className="recipe-card">
+                      <h3 className="recipe-card__title">{r.title}</h3>
+                      <p className="recipe-card__desc">{r.description}</p>
+                      <p className="small">
+                        <strong>Uses:</strong> {r.ingredientsUsed.join(", ")}
+                      </p>
+                      <ol className="recipe-card__steps">
+                        {r.steps.map((s, i) => (
+                          <li key={i}>{s}</li>
+                        ))}
+                      </ol>
+                      {r.notes ? (
+                        <p className="small muted">{r.notes}</p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <div className="scan-actions">
               <button type="button" className="btn btn--ghost" onClick={retake}>
                 Retake
               </button>
-              <button type="button" className="btn btn--primary" onClick={finish}>
+              <button
+                type="button"
+                className="btn btn--primary"
+                disabled={analyzing}
+                onClick={() => void findRecipes()}
+              >
+                {analyzing ? "Working…" : "Find recipes"}
+              </button>
+              <button type="button" className="btn btn--ghost" onClick={finish}>
                 Done
               </button>
             </div>

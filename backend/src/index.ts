@@ -11,6 +11,15 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
+/** Browsers opening http://localhost:PORT/ otherwise see Express "Cannot GET /". */
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "food-waste-api",
+    hint: "Use the Vite app for the UI. Try GET /api/health for a quick check.",
+  });
+});
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "food-waste-api" });
 });

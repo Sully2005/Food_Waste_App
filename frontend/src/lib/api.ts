@@ -45,7 +45,13 @@ export async function postRecipesRecommend(body: {
     );
   }
   return res.json() as Promise<{
-    recipes: unknown[];
+    recipes: {
+      title: string;
+      description: string;
+      ingredientsUsed: string[];
+      steps: string[];
+      notes?: string;
+    }[];
     source: string;
   }>;
 }
